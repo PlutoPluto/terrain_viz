@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Web 3D 地形可视化系统 (终极版)</title>
+    <!-- 引入 Plotly.js -->
+    <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
+    <style>
+        /* === 全局样式 === */
+        body { margin: 0; padding: 0; font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif; overflow: hidden; background: #f0f2f5; }
+        
+        /* === 左上角控制面板 === */
+        #control-panel {
+            position: absolute; top: 20px; left: 20px; z-index: 999;
+            background: rgba(255,255,255,0.95); /* 毛玻璃效果 */
+            padding: 20px; width: 280px;
+            border-radius: 12px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+            backdrop-filter: blur(8px);
+            display: flex; flex-direction: column; gap: 15px;
+            transition: transform 0.3s ease;
+        }
+
+        /* 标题与分割线 */
+        h3 { margin: 0; font-size: 16px; color: #333; border-left: 4px solid #007bff; padding-left: 10px; }
+        hr { border: 0; border-top: 1px solid #eee; width: 100%; margin: 0; }
+
+        /* 控件行布局 */
+        .control-row { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #555; }
+        .row-flex { display: flex; justify-content: space-between; align-items: center; }
+        
+        /* 按钮样式 */
+        .btn {
+            padding: 10px; border: none; border-radius: 6px; cursor: pointer;
+            font-size: 13px; font-weight: 600; color: white; transition: all 0.2s;
+            display: flex; align-items: center; justify-content: center; gap: 6px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .btn-primary { background: #007bff; }
+        .btn-primary:hover { background: #0056b3; transform: translateY(-1px); }
+        
+        .btn-download { background: #28a745; }
+        .btn-download:hover { background: #218838; transform: translateY(-1px); }
+        
+        .btn-outline {
+            background: white; border: 1px solid #007bff; color: #007bff; padding: 4px 8px; font-size: 11px;
+        }
+        .btn-outline:hover { background: #f0f8ff; }
+
+        .btn:disabled { background: #ccc; cursor: not-allowed; transform: none; box-shadow: none; }
+
+        /* 滑动条 */
+        input[type="range"] { width: 100%; cursor: pointer; margin-top: 5px; }
+        input[type="checkbox"] { cursor: pointer; width: 16px; height: 16px; }
+
+        /* === 主视图容器 === */
+        #main { width: 100vw; height: 100vh; }
+
+        /* === 隐藏容器 (用于后台生成图片) === */
+        #hidden-canvas {
+            position: fixed; top: 0; left: -9999px;
+            width: 2000px; height: 2000px; 
+            visibility: hidden; pointer-events: none;
+        }
+
+        /* === 加载动画遮罩 === */
+        #loading-mask {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.6); z-index: 1000;
+            display: none; justify-content: center; align-items: center; color: white;
+            flex-direction: column; font-size: 15px;
+        }
+        .spinner {
+            width: 36px; height: 36px; border: 4px solid rgba(255,255,255,0.3);
+            border-top: 4px solid #fff; border-radius: 50%;
+            animation: spin 1s linear infinite; margin-bottom: 15px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <!-- 加载层 -->
+    <div id="loading-mask">
+        <div class="spinner"></div>
+        <div id="loading-text">处理中...</div>
+    </div>
+
+    <!-- 悬浮控制面板 -->
+    <div id="control-panel">
+        <h3>地形可视化系统</h3>
+
+        <!-- 1. 导入数据 -->
+        <div class="control-row">
+            <input type="file" id="fileInput" accept=".txt,.csv,.dat" style="display:none">
+            <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+                📂 导入数据 (XYZ)
+            </button>
+        </div>
+
+        <hr>
+
+        <!-- 2. Z轴夸张控制 -->
+        <div class="control-row">
+            <div class="row-flex">
+                <span>Z轴夸张系数</span>
+                <!-- 一键恢复真实比例按钮 -->
+                <button class="btn btn-outline" onclick="resetTrueScale()" title="根据数据范围计算真实的物理比例">
+                    恢复 1:1 真实比例
+                </button>
+            </div>
+            <div class="row-flex" style="margin-top:2px;">
+                <span style="font-size:11px; color:#999;">值: <span id="zScaleVal" style="color:#333; font-weight:bold;">0.5</span></span>
+            </div>
+            <input type="range" id="zScale" min="0.01" max="5.0" step="0.01" value="0.5">
+        </div>
+
+        <!-- 3. 显示风格 -->
+        <div class="control-row">
+            <div class="row-flex">
+                <label for="chkFlat" style="cursor:pointer;">硬朗三角面 (Flat Shading)</label>
+                <input type="checkbox" id="chkFlat" checked>
+            </div>
+        </div>
+
+        <hr>
+
+        <!-- 4. 下载俯视图 -->
+        <div class="control-row">
+            <button class="btn btn-download" id="btnDownload" disabled onclick="downloadContourMap()">
+                ⬇️ 下载等高线俯视图
+            </button>
+            <div style="font-size:11px; color:#888; line-height:1.4;">
+                * 生成高清图 (PNG)<br>
+                * 无坐标轴，含右侧数值图例
+            </div>
+        </div>
+    </div>
+
+    <!-- 3D 主绘图区 -->
+    <div id="main"></div>
+
+    <!-- 幕后绘图区 -->
+    <div id="hidden-canvas"></div>
+
+    <script>
+        // === 全局状态 ===
+        let globalRawData = null;
+        let aspectXY = { x: 1, y: 1 };
+        let trueZRatio = 0.1; // 真实比例系数
+
+        // === DOM 引用 ===
+        const zScaleInput = document.getElementById('zScale');
+        const zScaleText = document.getElementById('zScaleVal');
+        const chkFlat = document.getElementById('chkFlat');
+        const loadingMask = document.getElementById('loading-mask');
+        const loadingText = document.getElementById('loading-text');
+
+        // === 事件监听 ===
+        
+        // 1. 文件导入
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            showLoading("正在解析数据...");
+            setTimeout(() => {
+                const reader = new FileReader();
+                reader.onload = (event) => processData(event.target.result);
+                reader.readAsText(file);
+            }, 50);
+        });
+
+        // 2. 滑块拖动
+        zScaleInput.addEventListener('input', function(e) {
+            zScaleText.innerText = e.target.value;
+            update3DView();
+        });
+
+        // 3. 风格切换
+        chkFlat.addEventListener('change', update3DView);
+
+        // === 核心逻辑 ===
+
+        // 处理数据
+        function processData(text) {
+            const lines = text.split('\n');
+            const points = [];
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            let minZ = Infinity, maxZ = -Infinity;
+
+            lines.forEach(line => {
+                const parts = line.trim().split(/[\s,]+/);
+                if (parts.length >= 3) {
+                    const x = parseFloat(parts[0]);
+                    const y = parseFloat(parts[1]);
+                    const z = parseFloat(parts[2]);
+                    if (!isNaN(x)) {
+                        points.push({x, y, z});
+                        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+                        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+                        minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+                    }
+                }
+            });
+
+            if (points.length === 0) {
+                alert("未找到有效数据！请检查文件格式。"); hideLoading(); return;
+            }
+
+            // 计算几何尺寸
+            const width = maxX - minX;
+            const height = maxY - minY;
+            const elevation = maxZ - minZ;
+            const maxDim = Math.max(width, height);
+
+            // 计算基础 XY 比例 (归一化)
+            aspectXY = { x: width / maxDim, y: height / maxDim };
+
+            // 【关键】计算 1:1 时的 Z 轴比例
+            // 如果 Z 范围是 0，防止除以0错误，给一个默认极小值
+            trueZRatio = (elevation > 0) ? (elevation / maxDim) : 0.01;
+
+            // 保存数据
+            globalRawData = { points, minX, maxX, minY, maxY, width, height, minZ, maxZ };
+
+            // 渲染
+            render3DTIN();
+            
+            // 激活按钮
+            document.getElementById('btnDownload').disabled = false;
+            hideLoading();
+        }
+
+        // 渲染 3D 三角网
+        function render3DTIN() {
+            const p = globalRawData.points;
+            const currentZScale = parseFloat(zScaleInput.value);
+            const isFlat = chkFlat.checked;
+
+            const trace = {
+                type: 'mesh3d',
+                x: p.map(pt => pt.x),
+                y: p.map(pt => pt.y),
+                z: p.map(pt => pt.z),
+                delaunayaxis: 'z', // 核心：基于 Z 轴投影进行三角剖分
+                intensity: p.map(pt => pt.z),
+                colorscale: 'Earth',
+                flatshading: isFlat, // 硬朗/平滑切换
+                lighting: { ambient: 0.5, diffuse: 0.8, roughness: 0.1 }
+            };
+
+            const layout = {
+                margin: { l:0, r:0, b:0, t:0 },
+                scene: {
+                    aspectmode: 'manual',
+                    aspectratio: { 
+                        x: aspectXY.x, 
+                        y: aspectXY.y, 
+                        z: currentZScale 
+                    },
+                    xaxis: { title: 'X' },
+                    yaxis: { title: 'Y' },
+                    zaxis: { title: 'Height' },
+                    camera: { eye: {x: 1.2, y: 1.2, z: 1.2} }
+                }
+            };
+
+            Plotly.newPlot('main', [trace], layout, {responsive: true, displayModeBar: false});
+        }
+
+        // 更新 3D 视图参数 (不重新解析数据)
+        function update3DView() {
+            if (!globalRawData) return;
+            const currentZScale = parseFloat(zScaleInput.value);
+            const isFlat = chkFlat.checked;
+
+            Plotly.restyle('main', { flatshading: isFlat });
+            Plotly.relayout('main', { 'scene.aspectratio.z': currentZScale });
+        }
+
+        // 恢复 1:1 真实比例
+        function resetTrueScale() {
+            if (!globalRawData) return;
+            // 设置滑块
+            zScaleInput.value = trueZRatio;
+            zScaleText.innerText = trueZRatio.toFixed(3);
+            // 更新视图
+            update3DView();
+        }
+
+        // 下载等高线俯视图
+        function downloadContourMap() {
+            const btn = document.getElementById('btnDownload');
+            const originalText = btn.innerText;
+            btn.innerText = "生成中...";
+            btn.disabled = true;
+            showLoading("正在生成高精度网格...");
+
+            setTimeout(() => {
+                // 1. 插值生成平滑网格 (IDW算法)
+                // 分辨率设为 200 以获得平滑曲线
+                const gridRes = 200; 
+                const grid = generateGridIDW(globalRawData, gridRes);
+
+                // 2. 配置 Contour 图层
+                const trace = {
+                    type: 'contour',
+                    z: grid.z, x: grid.x, y: grid.y,
+                    colorscale: 'Earth',
+                    
+                    // 图例设置 (带数字)
+                    showscale: true,
+                    colorbar: {
+                        title: 'Height (m)',
+                        titleside: 'right',
+                        titlefont: { size: 16, family: 'Arial' },
+                        tickfont: { size: 14, family: 'Arial' },
+                        thickness: 30,
+                        len: 0.9
+                    },
+                    
+                    // 等高线标签
+                    contours: {
+                        coloring: 'heatmap',
+                        showlabels: true, // 显示线上的数字
+                        labelfont: { size: 11, color: 'white' }
+                    },
+                    line: { width: 0.5, color: 'rgba(255,255,255,0.5)' }
+                };
+
+                // 3. 配置布局 (Layout)
+                const cleanLayout = {
+                    title: '', // 无标题
+                    // 右侧留出 180px 给图例，其余边距为 0
+                    margin: { l: 0, r: 180, b: 0, t: 0 }, 
+                    xaxis: { 
+                        visible: false, // 隐藏 X 轴
+                        scaleanchor: 'y', scaleratio: 1 
+                    },
+                    yaxis: { 
+                        visible: false  // 隐藏 Y 轴
+                    },
+                    paper_bgcolor: 'rgba(255,255,255,0)', // 透明背景
+                    plot_bgcolor: 'rgba(255,255,255,0)'
+                };
+
+                // 4. 在隐藏画布绘图并下载
+                Plotly.newPlot('hidden-canvas', [trace], cleanLayout).then(gd => {
+                    // 导出尺寸计算
+                    const exportWidth = 2500; // 基础宽度
+                    const mapHeight = exportWidth * (globalRawData.height / globalRawData.width);
+                    
+                    Plotly.downloadImage(gd, {
+                        format: 'png',
+                        // 最终宽度 = 地图宽 + 图例边距
+                        width: exportWidth + 180, 
+                        height: mapHeight,
+                        filename: 'contour_map_topview_hd'
+                    }).then(() => {
+                        btn.innerText = originalText;
+                        btn.disabled = false;
+                        hideLoading();
+                    });
+                });
+            }, 100);
+        }
+
+        // 辅助算法：IDW (反距离加权) 网格化
+        function generateGridIDW(data, res) {
+            const stepX = data.width / (res - 1);
+            const stepY = data.height / (res - 1);
+            const xArr = [], yArr = [], zMatrix = [];
+
+            for (let i = 0; i < res; i++) {
+                const cy = data.minY + i * stepY;
+                yArr.push(cy);
+                const row = [];
+                for (let j = 0; j < res; j++) {
+                    const cx = data.minX + j * stepX;
+                    if (i === 0) xArr.push(cx);
+                    
+                    let num = 0, den = 0;
+                    // 简单 IDW: 遍历所有点 (Power = 3)
+                    // 对于海量数据 (>5000点) 这里可能会慢，可优化为只取最近N点
+                    for (let p of data.points) {
+                        const d2 = (cx - p.x)**2 + (cy - p.y)**2;
+                        if (d2 < 1e-6) { num = p.z; den = 1; break; }
+                        const w = 1 / (d2 * Math.sqrt(d2)); 
+                        num += w * p.z; den += w;
+                    }
+                    row.push(num / den);
+                }
+                zMatrix.push(row);
+            }
+            return { x: xArr, y: yArr, z: zMatrix };
+        }
+
+        // UI 工具函数
+        function showLoading(msg) {
+            loadingText.innerText = msg;
+            loadingMask.style.display = 'flex';
+        }
+        function hideLoading() {
+            loadingMask.style.display = 'none';
+        }
+    </script>
+</body>
+</html>
