@@ -2,34 +2,24 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>Web 3D 地形可视化系统 (终极版)</title>
-    <!-- 引入 Plotly.js -->
+    <title>Web 3D 地形 - TIN 线性插值版</title>
     <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
+    <!-- D3 Delaunay 库 -->
+    <script src="https://cdn.jsdelivr.net/npm/d3-delaunay@6.0.4/dist/d3-delaunay.min.js"></script>
+    
     <style>
-        /* === 全局样式 === */
-        body { margin: 0; padding: 0; font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif; overflow: hidden; background: #f0f2f5; }
-        
-        /* === 左上角控制面板 === */
+        /* === 样式保持不变 === */
+        body { margin: 0; padding: 0; font-family: "Segoe UI", Roboto, sans-serif; overflow: hidden; background: #f0f2f5; }
         #control-panel {
             position: absolute; top: 20px; left: 20px; z-index: 999;
-            background: rgba(255,255,255,0.95); /* 毛玻璃效果 */
-            padding: 20px; width: 280px;
-            border-radius: 12px;
-            box-shadow: 0 8px 30px rgba(0,0,0,0.12);
-            backdrop-filter: blur(8px);
-            display: flex; flex-direction: column; gap: 15px;
-            transition: transform 0.3s ease;
+            background: rgba(255,255,255,0.95); padding: 20px; width: 280px;
+            border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+            backdrop-filter: blur(8px); display: flex; flex-direction: column; gap: 12px;
         }
-
-        /* 标题与分割线 */
         h3 { margin: 0; font-size: 16px; color: #333; border-left: 4px solid #007bff; padding-left: 10px; }
         hr { border: 0; border-top: 1px solid #eee; width: 100%; margin: 0; }
-
-        /* 控件行布局 */
         .control-row { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #555; }
         .row-flex { display: flex; justify-content: space-between; align-items: center; }
-        
-        /* 按钮样式 */
         .btn {
             padding: 10px; border: none; border-radius: 6px; cursor: pointer;
             font-size: 13px; font-weight: 600; color: white; transition: all 0.2s;
@@ -37,128 +27,84 @@
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         .btn-primary { background: #007bff; }
-        .btn-primary:hover { background: #0056b3; transform: translateY(-1px); }
-        
         .btn-download { background: #28a745; }
-        .btn-download:hover { background: #218838; transform: translateY(-1px); }
-        
-        .btn-outline {
-            background: white; border: 1px solid #007bff; color: #007bff; padding: 4px 8px; font-size: 11px;
-        }
-        .btn-outline:hover { background: #f0f8ff; }
-
-        .btn:disabled { background: #ccc; cursor: not-allowed; transform: none; box-shadow: none; }
-
-        /* 滑动条 */
-        input[type="range"] { width: 100%; cursor: pointer; margin-top: 5px; }
+        .btn-outline { background: white; border: 1px solid #007bff; color: #007bff; padding: 4px 8px; font-size: 11px; }
+        .btn:disabled { background: #ccc; cursor: not-allowed; }
+        input[type="range"] { width: 100%; margin-top: 5px; }
         input[type="checkbox"] { cursor: pointer; width: 16px; height: 16px; }
-
-        /* === 主视图容器 === */
+        .number-input { width: 60px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; text-align: center; }
         #main { width: 100vw; height: 100vh; }
-
-        /* === 隐藏容器 (用于后台生成图片) === */
-        #hidden-canvas {
-            position: fixed; top: 0; left: -9999px;
-            width: 2000px; height: 2000px; 
-            visibility: hidden; pointer-events: none;
-        }
-
-        /* === 加载动画遮罩 === */
+        #hidden-canvas { position: fixed; top: 0; left: -9999px; visibility: hidden; pointer-events: none; }
         #loading-mask {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.6); z-index: 1000;
-            display: none; justify-content: center; align-items: center; color: white;
-            flex-direction: column; font-size: 15px;
+            background: rgba(0,0,0,0.6); z-index: 1000; display: none; justify-content: center; align-items: center; color: white; font-size: 15px; flex-direction: column;
         }
-        .spinner {
-            width: 36px; height: 36px; border: 4px solid rgba(255,255,255,0.3);
-            border-top: 4px solid #fff; border-radius: 50%;
-            animation: spin 1s linear infinite; margin-bottom: 15px;
-        }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
 
-    <!-- 加载层 -->
-    <div id="loading-mask">
-        <div class="spinner"></div>
-        <div id="loading-text">处理中...</div>
-    </div>
+    <div id="loading-mask"><div id="loading-text">处理中...</div></div>
 
-    <!-- 悬浮控制面板 -->
     <div id="control-panel">
         <h3>地形可视化系统</h3>
 
-        <!-- 1. 导入数据 -->
         <div class="control-row">
             <input type="file" id="fileInput" accept=".txt,.csv,.dat" style="display:none">
-            <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
-                📂 导入数据 (XYZ)
-            </button>
+            <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">📂 导入数据 (XYZ)</button>
         </div>
-
         <hr>
-
-        <!-- 2. Z轴夸张控制 -->
         <div class="control-row">
             <div class="row-flex">
-                <span>Z轴夸张系数</span>
-                <!-- 一键恢复真实比例按钮 -->
-                <button class="btn btn-outline" onclick="resetTrueScale()" title="根据数据范围计算真实的物理比例">
-                    恢复 1:1 真实比例
-                </button>
+                <span>Z轴夸张</span>
+                <button class="btn btn-outline" onclick="resetTrueScale()">恢复 1:1</button>
             </div>
-            <div class="row-flex" style="margin-top:2px;">
-                <span style="font-size:11px; color:#999;">值: <span id="zScaleVal" style="color:#333; font-weight:bold;">0.5</span></span>
-            </div>
-            <input type="range" id="zScale" min="0.01" max="5.0" step="0.01" value="0.5">
+            <input type="range" id="zScale" min="0.01" max="5.0" step="0.01">
         </div>
-
-        <!-- 3. 显示风格 -->
         <div class="control-row">
             <div class="row-flex">
-                <label for="chkFlat" style="cursor:pointer;">硬朗三角面 (Flat Shading)</label>
-                <input type="checkbox" id="chkFlat" checked>
+                <label for="chkFlat" style="cursor:pointer;">硬朗三角面</label>
+                <input type="checkbox" id="chkFlat">
             </div>
         </div>
-
         <hr>
-
-        <!-- 4. 下载俯视图 -->
         <div class="control-row">
-            <button class="btn btn-download" id="btnDownload" disabled onclick="downloadContourMap()">
-                ⬇️ 下载等高线俯视图
-            </button>
+            <div class="row-flex">
+                <span title="边缘剥蚀力度">Alpha (剥蚀)</span>
+                <input type="number" id="alphaInput" class="number-input" value="0.02" step="0.01" min="0">
+            </div>
+            <div style="font-size:11px; color:#888; margin-top:4px;">
+                * 边缘剥蚀，保留内部<br>
+                * 0 = 凸包
+            </div>
+        </div>
+        <hr>
+        <div class="control-row">
+            <button class="btn btn-download" id="btnDownload" disabled onclick="downloadContourMap()">⬇️ 下载俯视图</button>
             <div style="font-size:11px; color:#888; line-height:1.4;">
-                * 生成高清图 (PNG)<br>
-                * 无坐标轴，含右侧数值图例
+                * <b>TIN 线性插值</b> (绝对精准)<br>
+                * 5m 等高线，图例对齐
             </div>
         </div>
     </div>
 
-    <!-- 3D 主绘图区 -->
     <div id="main"></div>
-
-    <!-- 幕后绘图区 -->
     <div id="hidden-canvas"></div>
 
     <script>
-        // === 全局状态 ===
         let globalRawData = null;
         let aspectXY = { x: 1, y: 1 };
-        let trueZRatio = 0.1; // 真实比例系数
+        let trueZRatio = 0.1;
+        
+        let globalDelaunay = null;
+        let currentMeshIndices = null; // 保存 I, J, K
+        // 注意：TIN插值不需要 boundaryPolygon，因为三角形列表本身就定义了边界
 
-        // === DOM 引用 ===
         const zScaleInput = document.getElementById('zScale');
-        const zScaleText = document.getElementById('zScaleVal');
         const chkFlat = document.getElementById('chkFlat');
+        const alphaInput = document.getElementById('alphaInput');
         const loadingMask = document.getElementById('loading-mask');
         const loadingText = document.getElementById('loading-text');
 
-        // === 事件监听 ===
-        
-        // 1. 文件导入
         document.getElementById('fileInput').addEventListener('change', function(e) {
             const file = e.target.files[0];
             if (!file) return;
@@ -170,24 +116,19 @@
             }, 50);
         });
 
-        // 2. 滑块拖动
-        zScaleInput.addEventListener('input', function(e) {
-            zScaleText.innerText = e.target.value;
-            update3DView();
+        zScaleInput.addEventListener('input', () => update3DView(false));
+        chkFlat.addEventListener('change', () => update3DView(false));
+        
+        let alphaDebounce;
+        alphaInput.addEventListener('input', () => {
+            clearTimeout(alphaDebounce);
+            alphaDebounce = setTimeout(() => recalcAlphaMesh(), 300);
         });
 
-        // 3. 风格切换
-        chkFlat.addEventListener('change', update3DView);
-
-        // === 核心逻辑 ===
-
-        // 处理数据
         function processData(text) {
             const lines = text.split('\n');
             const points = [];
-            let minX = Infinity, maxX = -Infinity;
-            let minY = Infinity, maxY = -Infinity;
-            let minZ = Infinity, maxZ = -Infinity;
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
 
             lines.forEach(line => {
                 const parts = line.trim().split(/[\s,]+/);
@@ -204,206 +145,247 @@
                 }
             });
 
-            if (points.length === 0) {
-                alert("未找到有效数据！请检查文件格式。"); hideLoading(); return;
-            }
+            if (points.length === 0) { alert("无有效数据"); hideLoading(); return; }
 
-            // 计算几何尺寸
             const width = maxX - minX;
             const height = maxY - minY;
-            const elevation = maxZ - minZ;
             const maxDim = Math.max(width, height);
-
-            // 计算基础 XY 比例 (归一化)
             aspectXY = { x: width / maxDim, y: height / maxDim };
+            trueZRatio = ((maxZ - minZ) > 0) ? ((maxZ - minZ) / maxDim) : 0.01;
 
-            // 【关键】计算 1:1 时的 Z 轴比例
-            // 如果 Z 范围是 0，防止除以0错误，给一个默认极小值
-            trueZRatio = (elevation > 0) ? (elevation / maxDim) : 0.01;
-
-            // 保存数据
             globalRawData = { points, minX, maxX, minY, maxY, width, height, minZ, maxZ };
-
-            // 渲染
-            render3DTIN();
+            zScaleInput.value = trueZRatio;
             
-            // 激活按钮
+            globalDelaunay = d3.Delaunay.from(points.map(p => [p.x, p.y]));
+
+            recalcAlphaMesh();
             document.getElementById('btnDownload').disabled = false;
             hideLoading();
         }
 
-        // 渲染 3D 三角网
-        function render3DTIN() {
-            const p = globalRawData.points;
-            const currentZScale = parseFloat(zScaleInput.value);
-            const isFlat = chkFlat.checked;
+        // 计算 Alpha Mesh (带剥蚀逻辑)
+        function recalcAlphaMesh() {
+            if (!globalRawData || !globalDelaunay) return;
+            
+            const alpha = parseFloat(alphaInput.value) || 0;
+            const radiusLimitSq = alpha > 0 ? (1 / alpha) ** 2 : Infinity;
 
+            const { triangles, halfedges, points: coords } = globalDelaunay;
+            const numTriangles = triangles.length / 3;
+            
+            const removed = new Uint8Array(numTriangles);
+            const queue = [];
+
+            // 初始化边缘队列
+            for (let e = 0; e < halfedges.length; e++) {
+                if (halfedges[e] === -1) {
+                    queue.push(Math.floor(e / 3));
+                }
+            }
+
+            let head = 0;
+            while(head < queue.length) {
+                const t = queue[head++];
+                if (removed[t]) continue;
+
+                const i = triangles[3*t], j = triangles[3*t+1], k = triangles[3*t+2];
+                const x1 = coords[i*2], y1 = coords[i*2+1];
+                const x2 = coords[j*2], y2 = coords[j*2+1];
+                const x3 = coords[k*2], y3 = coords[k*2+1];
+                
+                const a2 = (x1-x2)**2 + (y1-y2)**2;
+                const b2 = (x2-x3)**2 + (y2-y3)**2;
+                const c2 = (x3-x1)**2 + (y3-y1)**2;
+                const area = 0.5 * Math.abs((x2-x1)*(y3-y1) - (x3-x1)*(y2-y1));
+                // R^2
+                const R2 = (a2*b2*c2) / (16 * area * area);
+
+                // 如果半径超标，移除该边缘三角形，并暴露内部
+                if (R2 > radiusLimitSq) {
+                    removed[t] = 1;
+                    for (let m = 0; m < 3; m++) {
+                        const e = 3 * t + m;
+                        const neighborEdge = halfedges[e];
+                        if (neighborEdge !== -1) {
+                            const neighborTri = Math.floor(neighborEdge / 3);
+                            if (!removed[neighborTri]) queue.push(neighborTri);
+                        }
+                    }
+                }
+            }
+
+            const I = [], J = [], K = [];
+            for (let t = 0; t < numTriangles; t++) {
+                if (!removed[t]) {
+                    I.push(triangles[3*t]);
+                    J.push(triangles[3*t+1]);
+                    K.push(triangles[3*t+2]);
+                }
+            }
+
+            currentMeshIndices = { I, J, K };
+            // 不再需要提取边界多边形了
+            update3DView(true);
+        }
+
+        function update3DView(isNewData = false) {
+            if (!globalRawData || !currentMeshIndices) return;
+            const p = globalRawData.points;
             const trace = {
                 type: 'mesh3d',
-                x: p.map(pt => pt.x),
-                y: p.map(pt => pt.y),
-                z: p.map(pt => pt.z),
-                delaunayaxis: 'z', // 核心：基于 Z 轴投影进行三角剖分
+                x: p.map(pt => pt.x), y: p.map(pt => pt.y), z: p.map(pt => pt.z),
+                i: currentMeshIndices.I, j: currentMeshIndices.J, k: currentMeshIndices.K,
                 intensity: p.map(pt => pt.z),
-                colorscale: 'Earth',
-                flatshading: isFlat, // 硬朗/平滑切换
+                colorscale: 'Earth', flatshading: chkFlat.checked,
                 lighting: { ambient: 0.5, diffuse: 0.8, roughness: 0.1 }
             };
-
             const layout = {
                 margin: { l:0, r:0, b:0, t:0 },
                 scene: {
                     aspectmode: 'manual',
-                    aspectratio: { 
-                        x: aspectXY.x, 
-                        y: aspectXY.y, 
-                        z: currentZScale 
-                    },
-                    xaxis: { title: 'X' },
-                    yaxis: { title: 'Y' },
-                    zaxis: { title: 'Height' },
+                    aspectratio: { x: aspectXY.x, y: aspectXY.y, z: parseFloat(zScaleInput.value) },
+                    xaxis: { title: 'X' }, yaxis: { title: 'Y' }, zaxis: { title: 'Height' },
                     camera: { eye: {x: 1.2, y: 1.2, z: 1.2} }
                 }
             };
-
-            Plotly.newPlot('main', [trace], layout, {responsive: true, displayModeBar: false});
+            if (isNewData) Plotly.react('main', [trace], layout, {responsive: true, displayModeBar: false});
+            else {
+                Plotly.restyle('main', { flatshading: chkFlat.checked });
+                Plotly.relayout('main', { 'scene.aspectratio.z': parseFloat(zScaleInput.value) });
+            }
         }
 
-        // 更新 3D 视图参数 (不重新解析数据)
-        function update3DView() {
-            if (!globalRawData) return;
-            const currentZScale = parseFloat(zScaleInput.value);
-            const isFlat = chkFlat.checked;
-
-            Plotly.restyle('main', { flatshading: isFlat });
-            Plotly.relayout('main', { 'scene.aspectratio.z': currentZScale });
-        }
-
-        // 恢复 1:1 真实比例
         function resetTrueScale() {
             if (!globalRawData) return;
-            // 设置滑块
             zScaleInput.value = trueZRatio;
-            zScaleText.innerText = trueZRatio.toFixed(3);
-            // 更新视图
-            update3DView();
+            update3DView(false);
         }
 
-        // 下载等高线俯视图
         function downloadContourMap() {
             const btn = document.getElementById('btnDownload');
             const originalText = btn.innerText;
-            btn.innerText = "生成中...";
-            btn.disabled = true;
-            showLoading("正在生成高精度网格...");
+            btn.innerText = "生成中..."; btn.disabled = true;
+            showLoading("三角网栅格化...");
 
             setTimeout(() => {
-                // 1. 插值生成平滑网格 (IDW算法)
-                // 分辨率设为 200 以获得平滑曲线
-                const gridRes = 200; 
-                const grid = generateGridIDW(globalRawData, gridRes);
+                // 使用 TIN 栅格化
+                const gridRes = 300; // 分辨率越高线条越平滑，但计算稍慢
+                const grid = generateGridFromTIN(globalRawData, gridRes, currentMeshIndices);
+                
+                const mapBaseWidth = 2500; 
+                const mapBaseHeight = mapBaseWidth * (globalRawData.height / globalRawData.width);
+                const LEGEND_WIDTH = 150;
+                const totalExportWidth = mapBaseWidth + LEGEND_WIDTH;
 
-                // 2. 配置 Contour 图层
+                const contourStart = Math.floor(globalRawData.minZ / 5) * 5;
+                const contourEnd = Math.ceil(globalRawData.maxZ / 5) * 5;
+                const contourSize = 5; 
+
                 const trace = {
                     type: 'contour',
                     z: grid.z, x: grid.x, y: grid.y,
                     colorscale: 'Earth',
-                    
-                    // 图例设置 (带数字)
+                    zmin: contourStart, zmax: contourEnd, autocolorscale: false,
                     showscale: true,
                     colorbar: {
-                        title: 'Height (m)',
-                        titleside: 'right',
+                        title: 'Height (m)', titleside: 'right',
                         titlefont: { size: 16, family: 'Arial' },
                         tickfont: { size: 14, family: 'Arial' },
-                        thickness: 30,
-                        len: 0.9
+                        thickness: 30, len: 1, lenmode: 'fraction', y: 0.5, ypad: 0 
                     },
-                    
-                    // 等高线标签
                     contours: {
-                        coloring: 'heatmap',
-                        showlabels: true, // 显示线上的数字
-                        labelfont: { size: 11, color: 'white' }
+                        coloring: 'heatmap', showlabels: true,
+                        labelfont: { size: 11, color: 'white' },
+                        start: contourStart, end: contourEnd, size: contourSize
                     },
-                    line: { width: 0.5, color: 'rgba(255,255,255,0.5)' }
+                    line: { width: 0.5, color: 'rgba(255,255,255,0.5)' },
+                    connectgaps: false
                 };
 
-                // 3. 配置布局 (Layout)
                 const cleanLayout = {
-                    title: '', // 无标题
-                    // 右侧留出 180px 给图例，其余边距为 0
-                    margin: { l: 0, r: 180, b: 0, t: 0 }, 
-                    xaxis: { 
-                        visible: false, // 隐藏 X 轴
-                        scaleanchor: 'y', scaleratio: 1 
-                    },
-                    yaxis: { 
-                        visible: false  // 隐藏 Y 轴
-                    },
-                    paper_bgcolor: 'rgba(255,255,255,0)', // 透明背景
-                    plot_bgcolor: 'rgba(255,255,255,0)'
+                    title: '', width: totalExportWidth, height: mapBaseHeight,
+                    margin: { l: 0, r: LEGEND_WIDTH, b: 0, t: 0 },
+                    xaxis: { visible: false, range: [globalRawData.minX, globalRawData.maxX], constrain: 'domain' },
+                    yaxis: { visible: false, range: [globalRawData.minY, globalRawData.maxY], scaleanchor: 'x', scaleratio: 1, constrain: 'domain' },
+                    paper_bgcolor: 'rgba(255,255,255,0)', plot_bgcolor: 'rgba(255,255,255,0)'
                 };
 
-                // 4. 在隐藏画布绘图并下载
                 Plotly.newPlot('hidden-canvas', [trace], cleanLayout).then(gd => {
-                    // 导出尺寸计算
-                    const exportWidth = 2500; // 基础宽度
-                    const mapHeight = exportWidth * (globalRawData.height / globalRawData.width);
-                    
                     Plotly.downloadImage(gd, {
-                        format: 'png',
-                        // 最终宽度 = 地图宽 + 图例边距
-                        width: exportWidth + 180, 
-                        height: mapHeight,
-                        filename: 'contour_map_topview_hd'
+                        format: 'png', width: totalExportWidth, height: mapBaseHeight,
+                        filename: `contour_map_TIN`
                     }).then(() => {
-                        btn.innerText = originalText;
-                        btn.disabled = false;
-                        hideLoading();
+                        btn.innerText = originalText; btn.disabled = false; hideLoading();
                     });
                 });
             }, 100);
         }
 
-        // 辅助算法：IDW (反距离加权) 网格化
-        function generateGridIDW(data, res) {
-            const stepX = data.width / (res - 1);
-            const stepY = data.height / (res - 1);
-            const xArr = [], yArr = [], zMatrix = [];
-
+        // === 核心替换：TIN 栅格化算法 ===
+        // 直接遍历所有有效的三角形，对网格像素进行填充
+        function generateGridFromTIN(data, res, meshIndices) {
+            const { points, minX, maxX, minY, maxY, width, height } = data;
+            const { I, J, K } = meshIndices;
+            
+            const stepX = width / (res - 1);
+            const stepY = height / (res - 1);
+            
+            // 初始化结果矩阵 (全 null)
+            // zMatrix[row][col] -> y=row, x=col
+            const zMatrix = new Array(res).fill(null).map(() => new Array(res).fill(null));
+            
+            // 生成坐标轴数组
+            const xArr = [], yArr = [];
             for (let i = 0; i < res; i++) {
-                const cy = data.minY + i * stepY;
-                yArr.push(cy);
-                const row = [];
-                for (let j = 0; j < res; j++) {
-                    const cx = data.minX + j * stepX;
-                    if (i === 0) xArr.push(cx);
-                    
-                    let num = 0, den = 0;
-                    // 简单 IDW: 遍历所有点 (Power = 3)
-                    // 对于海量数据 (>5000点) 这里可能会慢，可优化为只取最近N点
-                    for (let p of data.points) {
-                        const d2 = (cx - p.x)**2 + (cy - p.y)**2;
-                        if (d2 < 1e-6) { num = p.z; den = 1; break; }
-                        const w = 1 / (d2 * Math.sqrt(d2)); 
-                        num += w * p.z; den += w;
-                    }
-                    row.push(num / den);
-                }
-                zMatrix.push(row);
+                xArr.push(minX + i * stepX);
+                yArr.push(minY + i * stepY);
             }
+
+            // 遍历每一个有效三角形，光栅化到 Grid 上
+            // 这种方法比遍历每一个像素去判断在哪个三角形内要快得多
+            for (let t = 0; t < I.length; t++) {
+                const p1 = points[I[t]];
+                const p2 = points[J[t]];
+                const p3 = points[K[t]];
+
+                // 1. 找出该三角形在 Grid 上的包围盒索引
+                const triMinX = Math.min(p1.x, p2.x, p3.x);
+                const triMaxX = Math.max(p1.x, p2.x, p3.x);
+                const triMinY = Math.min(p1.y, p2.y, p3.y);
+                const triMaxY = Math.max(p1.y, p2.y, p3.y);
+
+                const idxMinX = Math.max(0, Math.floor((triMinX - minX) / stepX));
+                const idxMaxX = Math.min(res - 1, Math.ceil((triMaxX - minX) / stepX));
+                const idxMinY = Math.max(0, Math.floor((triMinY - minY) / stepY));
+                const idxMaxY = Math.min(res - 1, Math.ceil((triMaxY - minY) / stepY));
+
+                // 2. 遍历包围盒内的 Grid 点
+                for (let row = idxMinY; row <= idxMaxY; row++) {
+                    const py = yArr[row];
+                    for (let col = idxMinX; col <= idxMaxX; col++) {
+                        const px = xArr[col];
+
+                        // 3. 计算重心坐标 (Barycentric coordinates)
+                        // 用来判断点是否在三角形内，以及计算插值高度
+                        const det = (p2.y - p3.y) * (p1.x - p3.x) + (p3.x - p2.x) * (p1.y - p3.y);
+                        const w1 = ((p2.y - p3.y) * (px - p3.x) + (p3.x - p2.x) * (py - p3.y)) / det;
+                        const w2 = ((p3.y - p1.y) * (px - p3.x) + (p1.x - p3.x) * (py - p3.y)) / det;
+                        const w3 = 1 - w1 - w2;
+
+                        // 如果在三角形内 (允许微小误差)
+                        if (w1 >= -1e-6 && w2 >= -1e-6 && w3 >= -1e-6) {
+                            const zVal = w1 * p1.z + w2 * p2.z + w3 * p3.z;
+                            zMatrix[row][col] = zVal;
+                        }
+                    }
+                }
+            }
+
             return { x: xArr, y: yArr, z: zMatrix };
         }
 
-        // UI 工具函数
-        function showLoading(msg) {
-            loadingText.innerText = msg;
-            loadingMask.style.display = 'flex';
-        }
-        function hideLoading() {
-            loadingMask.style.display = 'none';
-        }
+        function showLoading(msg) { loadingText.innerText = msg; loadingMask.style.display = 'flex'; }
+        function hideLoading() { loadingMask.style.display = 'none'; }
     </script>
 </body>
 </html>
